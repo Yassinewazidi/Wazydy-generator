@@ -1,0 +1,113 @@
+import tensorflow as tf
+from tensorflow.keras import layers, models
+import matplotlib.pyplot as plt
+import os
+
+class AttentionLayer(layers.Layer):
+    def __init__(self):
+        super(AttentionLayer, self).__init__()
+
+    def build(self, input_shape):
+        self.gamma = self.add_weight(name='gamma', shape=(1,), initializer='zeros', trainable=True)
+
+    def call(self, x):
+        avg = tf.reduce_mean(x, axis=-1, keepdims=True)
+        attention = tf.multiply(x, self.gamma * avg)
+        return tf.concat([x, attention], axis=-1)
+
+class Generator(tf.keras.Model):
+    def __init__(self, latent_dim, output_shape, num_styles=3):
+        super(Generator, self).__init__()
+
+        self.num_styles = num_styles
+
+        # Capas compartidas
+        self.shared_layers = [
+            layers.Dense(512, input_dim=latent_dim),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Reshape((8, 8, 8)),
+            AttentionLayer()
+        ]
+
+        # Capas específicas de estilo
+        self.style_specific_layers = [
+            [
+                layers.Conv2DTranspose(256, kernel_size=3, strides=2, padding='same'),
+                layers.BatchNormalization(),
+                layers.LeakyReLU(alpha=0.2)
+            ] for _ in range(num_styles)
+        ]
+
+        # Capas de convolución transpuesta
+        self.conv_layers = [
+            layers.Conv2DTranspose(128, kernel_size=3, strides=2, padding='same'),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+
+            layers.Conv2DTranspose(64, kernel_size=3, strides=2, padding='same'),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+
+            layers.Conv2DTranspose(32, kernel_size=3, strides=2, padding='same'),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+
+            layers.Conv2DTranspose(3, kernel_size=3, strides=2, padding='same', activation='sigmoid'),
+            layers.Reshape(output_shape)
+        ]
+
+    def call(self, inputs, style_idx, training=False):
+        x = inputs
+        for layer in self.shared_layers:
+            x = layer(x, training=training)
+
+        specific_layers = self.style_specific_layers[style_idx]
+        for layer in specific_layers:
+            x = layer(x, training=training)
+
+        for layer in self.conv_layers:
+            x = layer(x, training=training)
+
+        return x
+
+# Tamaño del espacio latente
+latent_dim = 100
+# Tamaño de la imagen generada
+output_shape = (64, 64, 3)
+# Número de estilos
+num_styles = 3
+
+# Crear el generador con múltiples estilos
+generator = Generator(latent_dim, output_shape, num_styles)
+
+# Resumen del generador
+generator.build((None, latent_dim))
+generator.summary()
+
+# Directorio para almacenar imágenes generadas
+output_directory = "generated_images"
+os.makedirs(output_directory, exist_ok=True)
+
+# Función para generar y guardar imágenes con un estilo específico
+def generate_and_save_images(generator, latent_dim, style_idx, num_images=1, output_directory="generated_images"):
+    random_input = tf.random.normal([num_images, latent_dim])
+    generated_images = generator(random_input, style_idx, training=False).numpy()
+
+    # Guardar las imágenes en archivos
+    for i in range(num_images):
+        filename = f"{output_directory}/generated_image_style_{style_idx}_{i+1}.png"
+        plt.imsave(filename, generated_images[i])
+
+# Generar y guardar imágenes con estilo 0
+generate_and_save_images(generator, latent_dim, style_idx=0, num_images=3, output_directory=output_directory)
+# Generar y guardar imágenes con estilo 1
+generate_and_save_images(generator, latent_dim, style_idx=1, num_images=3, output_directory=output_directory)
+# Generar y guardar imágenes con estilo 2
+generate_and_save_images(generator, latent_dim, style_idx=2, num_images=3, output_directory=output_directory)
+
+# Mostrar mensaje con enlaces de descarga
+print("Imágenes generadas y guardadas. Puedes descargarlas:")
+for style_idx in range(num_styles):
+    for i in range(3):  # Cambia esto según la cantidad de imágenes generadas
+        filename = f"generated_images/generated_image_style_{style_idx}_{i+1}.png"
+        print(f"- [Descargar imagen {i+1} con estilo {style_idx}]({filename})")
