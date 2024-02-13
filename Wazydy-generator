@@ -1,11 +1,46 @@
+from flask import Flask, render_template, request, redirect, url_for, session
+from flask_oauthlib.client import OAuth
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import matplotlib.pyplot as plt
 import openai
 import os
 
+app = Flask(__name__)
+app.secret_key = 'your-secret-key'
+
 # Configurar OpenAI API Key (reemplaza 'tu-api-key' con tu propia clave)
 openai.api_key = 'tu-api-key'
+
+# Configuración de autenticación con Google
+google_oauth = OAuth(app)
+google = google_oauth.remote_app(
+    'google',
+    consumer_key='your-google-client-id',
+    consumer_secret='your-google-client-secret',
+    request_token_params={
+        'scope': 'email',
+    },
+    base_url='https://www.googleapis.com/oauth2/v1/',
+    request_token_url=None,
+    access_token_method='POST',
+    access_token_url='https://accounts.google.com/o/oauth2/token',
+    authorize_url='https://accounts.google.com/o/oauth2/auth',
+)
+
+# Configuración de autenticación con Facebook
+facebook_oauth = OAuth(app)
+facebook = facebook_oauth.remote_app(
+    'facebook',
+    consumer_key='your-facebook-app-id',
+    consumer_secret='your-facebook-app-secret',
+    request_token_params={'scope': 'email'},
+    base_url='https://graph.facebook.com/',
+    request_token_url=None,
+    access_token_method='GET',
+    access_token_url='/oauth/access_token',
+    authorize_url='https://www.facebook.com/dialog/oauth',
+)
 
 class AttentionLayer(layers.Layer):
     # ... (código de la capa de atención)
@@ -44,11 +79,11 @@ image_generator.summary()
 text_ai = TextAI()
 
 # Directorio para almacenar imágenes generadas
-output_directory = "generated_images"
+output_directory = "static/generated_images"
 os.makedirs(output_directory, exist_ok=True)
 
 # Función para generar y guardar imágenes con un estilo específico
-def generate_and_save_images(generator, latent_dim, style_idx, num_images=1, output_directory="generated_images"):
+def generate_and_save_images(generator, latent_dim, style_idx, num_images=1, output_directory="static/generated_images"):
     random_input = tf.random.normal([num_images, latent_dim])
     generated_images = generator(random_input, style_idx, training=False).numpy()
 
@@ -57,15 +92,85 @@ def generate_and_save_images(generator, latent_dim, style_idx, num_images=1, out
         filename = f"{output_directory}/generated_image_style_{style_idx}_{i+1}.png"
         plt.imsave(filename, generated_images[i])
 
-# Función para la generación de texto
-def generate_text_response(text_ai, input_text):
-    return text_ai.generate_text(input_text)
+# Rutas web
+@app.route('/')
+def index():
+    return '''
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Generador IA</title>
+        </head>
+        <body>
+            <h1>Generador IA</h1>
+            <form action="/generate" method="post">
+                <label for="user_input">Ingresa tu texto:</label>
+                <input type="text" id="user_input" name="user_input" required>
+                <button type="submit">Generar</button>
+            </form>
+            <br>
+            <a href="/login/google">Iniciar sesión con Google</a>
+            <br>
+            <a href="/login/facebook">Iniciar sesión con Facebook</a>
+        </body>
+        </html>
+    '''
 
-# Ejemplo de uso
-user_input_for_text = "Cuéntame una historia interesante."
-generated_text_response = generate_text_response(text_ai, user_input_for_text)
-print("Respuesta generada por la IA de texto:")
-print(generated_text_response)
+@app.route('/generate', methods=['POST'])
+def generate():
+    user_input_for_text = request.form['user_input']
+    
+    # Generar texto
+    generated_text_response = text_ai.generate_text(user_input_for_text)
 
-# Ejemplo de generación y guardado de imágenes
-generate_and_save_images(image_generator, latent_dim, style_idx=0, num_images=3, output_directory=output_directory)
+    # Generar y guardar imágenes
+    for style_idx in range(num_styles):
+        generate_and_save_images(image_generator, latent_dim, style_idx, num_images=1, output_directory=output_directory)
+
+    return f'''
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Resultados</title>
+        </head>
+        <body>
+            <h2>Resultados</h2>
+            <p>Texto ingresado: {user_input_for_text}</p>
+            <p>Respuesta generada: {generated_text_response}</p>
+
+            <h3>Imágenes generadas:</h3>
+            {"".join([f'<img src="static/generated_images/generated_image_style_{style_idx}_{i+1}.png" alt="Generated Image Style {style_idx}">' for i in range(3)])}
+        </body>
+        </html>
+    '''
+
+@app.route('/login/google')
+def login_google():
+    return google.authorize(callback=url_for('authorized_google', _external=True))
+
+@app.route('/login/facebook')
+def login_facebook():
+    return facebook.authorize(callback=url_for('authorized_facebook', _external=True))
+
+@app.route('/logout')
+def logout():
+    session.pop('google_token', None)
+    session.pop('facebook_token', None)
+    return redirect(url_for('index'))
+
+@app.route('/login/authorized/google')
+def authorized_google():
+    response = google.authorized_response()
+    if response is None or response.get('access_token') is None:
+        return 'Acceso denegado: razón={}, error={}'.format(
+            request.args['error_reason'],
+            request.args['error_description']
+        )
+    
+    session['google_token'] = (response['access_token'], '')
+    user_info = google.get('userinfo')
+    return 'In
