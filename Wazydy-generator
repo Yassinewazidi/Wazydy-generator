@@ -173,4 +173,17 @@ def authorized_google():
     
     session['google_token'] = (response['access_token'], '')
     user_info = google.get('userinfo')
-    return 'In
+    return f'Inicio de sesión exitoso con Google. ID: {user_info.data["id"]}, Nombre: {user_info.data["name"]}'
+
+@app.route('/login/authorized/facebook')
+def authorized_facebook():
+    response = facebook.authorized_response()
+    if response is None or response.get('access_token') is None:
+        return 'Acceso denegado: razón={}, error={}'.format(
+            request.args['error_reason'],
+            request.args['error_description']
+        )
+
+    session['facebook_token'] = (response['access_token'], '')
+    user_info = facebook.get('/me')
+    return f'Inicio
